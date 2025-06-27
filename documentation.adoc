@@ -1,0 +1,507 @@
+[#_dynamictaskscheduler]
+= DynamicTaskScheduler
+
+== Overview
+
+The `DynamicTaskScheduler` is a Spring component that provides dynamic scheduling capabilities for cron jobs stored in a database.It allows for real-time updates to scheduled tasks without requiring application restart.
+
+== Class Information
+
+[cols="1,3"]
+|===
+| Package | `nl.denkzelf.springdynamiccron`
+| Annotations | `@Slf4j`, `@Component`, `@RequiredArgsConstructor`
+| Dependencies | `TaskScheduler`, `DatabaseCronService`
+|===
+
+== Key Features
+
+* **Dynamic Scheduling**: Automatically schedules and reschedules cron jobs based on database changes
+* **Real-time Updates**: Listens for database changes and updates schedules accordingly
+* **Validation**: Validates cron expressions before scheduling
+* **Error Handling**: Comprehensive error handling and logging
+* **Status Monitoring**: Provides task status information
+* **Manual Refresh**: Supports manual refresh of all scheduled tasks
+
+== Architecture
+
+The scheduler maintains a `ConcurrentHashMap` of active scheduled tasks, where:
+- **Key**: Task name (String)
+- **Value**: `ScheduledFuture<?>` representing the scheduled task
+
+== Core Methods
+
+=== Initialization
+
+==== `initialize()`
+[source,java]
+----
+@PostConstruct
+public void initialize()
+----
+
+* Called automatically after bean construction
+* Sets up change listener for database updates
+* Schedules all active tasks from the database
+
+=== Scheduling Operations
+
+==== `scheduleAllTasks()`
+[source,java]
+----
+private void scheduleAllTasks()
+----
+
+* Retrieves all active cron jobs from the database
+* Delegates to `updateSchedules()` for actual scheduling
+
+==== `updateSchedules(List<CronJob> cronJobs)`
+[source,java]
+----
+private void updateSchedules(List<CronJob> cronJobs)
+----
+
+* Updates the complete schedule with provided cron jobs
+* Cancels all existing tasks before scheduling new ones
+* Logs the number of jobs being updated
+
+==== `scheduleTask(CronJob cronJob)`
+[source,java]
+----
+private void scheduleTask(CronJob cronJob)
+----
+
+* Schedules a single cron job
+* Validates the cron expression before scheduling
+* Handles scheduling errors gracefully
+* Stores the `ScheduledFuture` for later management
+
+=== Validation
+
+==== `isValidCronExpression(String cronExpression)`
+[source,java]
+----
+private boolean isValidCronExpression(String cronExpression)
+----
+
+**Parameters:**
+[cols="1,1,3"]
+|===
+| Name | Type | Description
+| `cronExpression` | `String` | The cron expression to validate
+|===
+
+**Returns:** `boolean` - `true` if valid, `false` otherwise
+
+**Validation Rules:**
+* Expression must not be null or empty
+* Must be parseable by Spring's `CronExpression.parse()`
+
+=== Job Execution
+
+==== `executeJob(CronJob cronJob)`
+[source,java]
+----
+private void executeJob(CronJob cronJob)
+----
+
+* Executes the scheduled job
+* Currently logs execution details
+* Designed to be extended for actual job class instantiation
+* Handles execution errors with comprehensive logging
+
+=== Task Management
+
+==== `cancelAllTasks()`
+[source,java]
+----
+private void cancelAllTasks()
+----
+
+* Cancels all currently scheduled tasks
+* Clears the internal task registry
+* Uses non-interrupting cancellation (`cancel(false)`)
+
+==== `manualRefresh()`
+[source,java]
+----
+public void manualRefresh()
+----
+
+* Provides manual refresh capability for all scheduled tasks
+* Useful for administrative operations or troubleshooting
+
+==== `getTaskStatus()`
+[source,java]
+----
+public Map<String, Boolean> getTaskStatus()
+----
+
+**Returns:** `Map<String, Boolean>` where:
+- **Key**: Task name
+- **Value**: `true` if task is active (not cancelled or done), `false` otherwise
+
+== Usage Example
+
+[source,java]
+----
+@Autowired
+private DynamicTaskScheduler scheduler;
+
+// Manual refresh of all tasks
+scheduler.manualRefresh();
+
+// Check status of all tasks
+Map<String, Boolean> status = scheduler.getTaskStatus();
+status.forEach((taskName, isActive) ->
+    System.out.println(taskName + " is " + (isActive ? "active" : "inactive"))
+);
+----
+
+== Configuration Requirements
+
+The component requires the following beans to be available:
+
+* `TaskScheduler` - Spring's task scheduler implementation
+* `DatabaseCronService` - Service for database operations related to cron jobs
+
+== Error Handling
+
+The scheduler implements comprehensive error handling:
+
+* **Invalid Cron Expressions**: Logged as errors, tasks are skipped
+* **Scheduling Errors**: Logged with full context including task name and expression
+* **Execution Errors**: Logged with job name and error details
+* **Cancellation Errors**: Logged as warnings, process continues
+
+== Logging
+
+The class uses SLF4J logging with the following levels:
+
+* **INFO**: Schedule updates, task executions, manual refreshes
+* **DEBUG**: Individual task cancellations
+* **WARN**: Invalid cron expressions, cancellation errors
+* **ERROR**: Scheduling failures, execution failures
+
+== Thread Safety
+
+The implementation is thread-safe:
+* Uses `ConcurrentHashMap` for task storage
+* All operations are synchronized through the underlying Spring `TaskScheduler`
+* Change listeners are handled safely
+
+== Extension Points
+
+The class can be extended by:
+
+1. **Custom Job Execution**: Modify `executeJob()` to use reflection for dynamic job class instantiation
+2. **Custom Validation**: Extend `isValidCronExpression()` for additional validation rules
+3. **Custom Listeners**: Add additional change listeners for monitoring
+4. **Metrics Integration**: Add metrics collection for monitoring and alerting
+
+== Dependencies
+
+[cols="1,1,2"]
+|===
+| Dependency | Version | Purpose
+| Spring Framework | 6.x | Core scheduling and dependency injection
+| Jakarta EE | 10.x | Annotations and enterprise features
+| Lombok | Latest | Code generation and logging
+| SLF4J | Latest | Logging abstraction
+|===
+
+[#_databasecronservice]
+= DatabaseCronService
+
+== Overview
+
+The `DatabaseCronService` is a Spring service component that acts as a bridge between the database-stored cron job configurations and the dynamic task scheduling system.It provides database access methods and implements a change detection mechanism to automatically notify listeners when cron job configurations are modified in the database.
+
+== Class Information
+
+[cols="1,3"]
+|===
+| Package | `nl.denkzelf.springdynamiccron`
+| Annotations | `@Slf4j`, `@Service`, `@RequiredArgsConstructor`
+| Dependencies | `CronJobRepository`
+|===
+
+== Key Features
+
+* **Database Integration**: Provides methods to retrieve cron jobs from the database
+* **Change Detection**: Automatically detects changes in cron job configurations
+* **Event-Driven Architecture**: Notifies listeners when changes are detected
+* **Transactional Support**: All database operations are properly transactional
+* **Thread Safety**: Uses concurrent data structures for safe multi-threaded access
+* **Automatic Polling**: Periodically checks for database changes every 10 seconds
+
+== Architecture
+
+The service maintains an internal cache of known cron jobs using a `ConcurrentHashMap` to enable efficient change detection:
+
+- **Key**: Job name (String)
+- **Value**: `CronJob` entity representing the last known state
+
+== Data Flow
+
+[source,text]
+----
+Database → Repository → Service → Change Detection → Listener Notification
+    ↑                                      ↓
+    └─── Periodic Polling (10s) ←─────────┘
+----
+
+== Public Methods
+
+=== Data Retrieval
+
+==== `getActiveCronJobs()`
+[source,java]
+----
+@Transactional(readOnly = true)
+public List<CronJob> getActiveCronJobs()
+----
+
+**Purpose:** Retrieves all active cron jobs from the database
+
+**Returns:** `List<CronJob>` - List of active cron jobs
+
+**Transaction:** Read-only transaction
+
+**Usage:**
+[source,java]
+----
+List<CronJob> activeJobs = databaseCronService.getActiveCronJobs();
+----
+
+==== `getAllCronJobs()`
+[source,java]
+----
+@Transactional(readOnly = true)
+public List<CronJob> getAllCronJobs()
+----
+
+**Purpose:** Retrieves all cron jobs from the database (both active and inactive)
+
+**Returns:** `List<CronJob>` - List of all cron jobs
+
+**Transaction:** Read-only transaction
+
+**Usage:**
+[source,java]
+----
+List<CronJob> allJobs = databaseCronService.getAllCronJobs();
+----
+
+=== Change Listener Management
+
+==== `setCronJobsChangeListener(Consumer<List<CronJob>> listener)`
+[source,java]
+----
+@Setter
+private Consumer<List<CronJob>> cronJobsChangeListener
+----
+
+**Purpose:** Sets a listener that will be notified when cron job changes are detected
+
+**Parameters:**
+[cols="1,1,3"]
+|===
+| Name | Type | Description
+| `listener` | `Consumer<List<CronJob>>` | Callback function to handle cron job changes
+|===
+
+**Usage:**
+[source,java]
+----
+databaseCronService.setCronJobsChangeListener(jobs -> {
+    // Handle the updated list of cron jobs
+    updateSchedules(jobs);
+});
+----
+
+== Automatic Change Detection
+
+=== `checkForDatabaseChanges()`
+[source,java]
+----
+@Scheduled(fixedDelay = 10000)
+@Transactional(readOnly = true)
+public void checkForDatabaseChanges()
+----
+
+**Purpose:** Automatically checks for changes in the database every 10 seconds
+
+**Scheduling:** Fixed delay of 10,000 milliseconds (10 seconds) between executions
+
+**Process Flow:**
+1. Retrieves current active cron jobs from database
+2. Compares with last known state using `hasJobsChanged()`
+3. If changes detected:
+- Logs the detection
+- Updates internal cache with `updateLastKnownJobs()`
+- Notifies the registered listener (if present)
+4. Handles any exceptions during the process
+
+**Error Handling:** All exceptions are caught and logged to prevent scheduled execution from stopping
+
+== Private Helper Methods
+
+=== Change Detection Logic
+
+==== `hasJobsChanged(List<CronJob> currentJobs)`
+[source,java]
+----
+private boolean hasJobsChanged(List<CronJob> currentJobs)
+----
+
+**Purpose:** Determines if the current list of jobs differs from the last known state
+
+**Detection Criteria:**
+- Different number of jobs
+- New job added (not in last known jobs)
+- Existing job modified (name, cron expression, or active status changed)
+
+**Returns:** `boolean` - `true` if changes detected, `false` otherwise
+
+==== `jobEquals(CronJob job1, CronJob job2)`
+[source,java]
+----
+private boolean jobEquals(CronJob job1, CronJob job2)
+----
+
+**Purpose:** Compares two cron jobs for equality
+
+**Comparison Fields:**
+- Job name
+- Cron expression
+- Active status
+
+**Returns:** `boolean` - `true` if jobs are equivalent, `false` otherwise
+
+=== Cache Management
+
+==== `updateLastKnownJobs(List<CronJob> jobs)`
+[source,java]
+----
+private void updateLastKnownJobs(List<CronJob> jobs)
+----
+
+**Purpose:** Updates the internal cache with the current state of cron jobs
+
+**Process:**
+1. Clears existing cache
+2. Populates cache with current jobs using job name as key
+
+== Configuration
+
+=== Scheduling Configuration
+
+The service uses Spring's `@Scheduled` annotation with the following configuration:
+
+[cols="1,1,3"]
+|===
+| Property | Value | Description
+| `fixedDelay` | 10000 | 10 seconds delay between method executions
+| Transaction | Read-only | Optimized for read operations
+|===
+
+=== Dependencies
+
+The service requires the following components:
+
+[cols="1,2"]
+|===
+| Dependency | Description
+| `CronJobRepository` | Spring Data JPA repository for cron job database operations
+|===
+
+== Usage Examples
+
+=== Basic Usage
+[source,java]
+----
+@Autowired
+private DatabaseCronService cronService;
+
+// Get all active jobs
+List<CronJob> activeJobs = cronService.getActiveCronJobs();
+
+// Get all jobs (active and inactive)
+List<CronJob> allJobs = cronService.getAllCronJobs();
+----
+
+=== Setting Up Change Listener
+[source,java]
+----
+@PostConstruct
+public void initialize() {
+    cronService.setCronJobsChangeListener(this::handleCronJobChanges);
+}
+
+private void handleCronJobChanges(List<CronJob> updatedJobs) {
+    log.info("Received {} updated cron jobs", updatedJobs.size());
+    // Process the updated jobs
+}
+----
+
+== Error Handling
+
+The service implements comprehensive error handling:
+
+* **Database Exceptions**: Caught during change detection polling
+* **Null Safety**: Checks for null listener before invocation
+* **Transaction Rollback**: Read-only transactions ensure no data modification on errors
+
+== Logging
+
+The class uses SLF4J logging with the following events:
+
+* **INFO**: When changes are detected in cron jobs
+* **ERROR**: When exceptions occur during database change checking
+
+== Thread Safety
+
+The implementation ensures thread safety through:
+
+* **ConcurrentHashMap**: Thread-safe storage for last known jobs
+* **Transactional Methods**: Database operations are properly isolated
+* **Immutable Lists**: Returns immutable collections from repository calls
+
+== Performance Considerations
+
+* **Fixed Delay Scheduling**: Ensures previous execution completes before starting next
+* **Read-Only Transactions**: Optimized database access for query operations
+* **Efficient Change Detection**: Only processes changes when actually detected
+* **Concurrent Cache**: Minimizes lock contention in multi-threaded environments
+
+== Integration Points
+
+The service integrates with:
+
+1. **Spring Data JPA**: Through `CronJobRepository`
+2. **Spring Transaction Management**: Via `@Transactional`
+3. **Spring Task Scheduling**: Via `@Scheduled`
+4. **Event Listeners**: Through the change listener mechanism
+
+== Extension Points
+
+The service can be extended by:
+
+1. **Custom Change Detection**: Override `jobEquals()` for additional comparison criteria
+2. **Multiple Listeners**: Extend to support multiple change listeners
+3. **Configurable Polling**: Make the fixed delay configurable via properties
+4. **Metrics Integration**: Add performance and change detection metrics
+5. **Custom Filtering**: Add methods for filtered job retrieval
+
+== Dependencies
+
+[cols="1,1,2"]
+|===
+| Dependency | Version | Purpose
+| Spring Framework | 6.x | Core service and transaction management
+| Spring Data JPA | 3.x | Repository pattern and database access
+| Jakarta EE | 10.x | Transaction annotations
+| Lombok | Latest | Code generation and logging
+| SLF4J | Latest | Logging abstraction
+|===
